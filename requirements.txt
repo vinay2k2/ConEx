@@ -1,5 +1,5 @@
 # Streamlit app
-streamlit
+streamlit==1.28.0
 
 # CrewAI (agent orchestration)
 crewai
@@ -10,19 +10,19 @@ langchain-core==0.2.34
 langchain-community==0.2.10
 
 # Vector DB
-chromadb
+chromadb==0.3.26
 
 # PDF loader dependency used by PyPDFLoader
-pypdf
+pypdf==3.11.0
 
 # OpenAI python SDK (if used directly)
-openai
+openai==1.0.0
 
 # HTTP requests
-requests
+requests==2.31.0
 
 # Type / compatibility helpers
-typing-extensions
+typing-extensions==4.7.1
 
 # force Pydantic v1 to avoid pydantic v2 incompatibilities with older langchain layout
 pydantic==1.10.12
