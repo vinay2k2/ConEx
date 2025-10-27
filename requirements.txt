@@ -23,7 +23,7 @@ chromadb==0.3.22
 pypdf==3.11.0
 
 # OpenAI python SDK (if used directly)
-openai==1.0.0
+openai==0.28.1
 
 # HTTP requests
 requests==2.31.0
