@@ -1,0 +1,26 @@
+# Streamlit app
+streamlit
+
+# CrewAI (agent orchestration)
+crewai
+
+# LangChain modular packages used in the code
+langchain-core
+langchain-openai
+langchain-community
+
+# Vector DB
+chromadb
+
+# PDF loader dependency used by PyPDFLoader
+pypdf
+
+# OpenAI python SDK (for embeddings / LLM if used directly)
+openai
+
+# HTTP requests
+requests
+
+# Type / compatibility helpers
+typing-extensions
+pydantic
