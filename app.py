@@ -7,7 +7,7 @@ import json
 from crewai import Crew, Task, Agent
 from crewai.tools import tool 
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings 
-from langchain_core.pydantic_v1 import BaseModel, Field
+# from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -46,9 +46,9 @@ def init_session_state():
 # --- 2. CrewAI Tool Definitions ---
 
 # A custom Pydantic model for the output of the RAG tool (currently unused by LLM but good practice)
-class RagResult(BaseModel):
-    source: str = Field(description="The name of the paper (e.g., 'Paper 1 - Attention') where the chunk was found.")
-    chunk: str = Field(description="The most relevant text chunk found in the paper.")
+# class RagResult(BaseModel):
+#     source: str = Field(description="The name of the paper (e.g., 'Paper 1 - Attention') where the chunk was found.")
+#     chunk: str = Field(description="The most relevant text chunk found in the paper.")
 
 @tool("Multi-Document RAG Search")
 def multi_rag_tool(question: str) -> str:
