@@ -5,13 +5,19 @@ streamlit==1.28.0
 crewai
 
 # LangChain packages pinned to 0.2.x family (compatible with langchain_core.pydantic_v1)
-langchain==0.2.14
-langchain-core==0.2.34
-langchain-community==0.2.10
-langchain-openai
+# langchain==0.2.14
+# langchain-core==0.2.34
+# langchain-community==0.2.10
+# langchain-openai
+
+# allow pip to choose compatible langchain version that works with crewai/chromadb
+langchain
+langchain-chroma
+chromadb==0.3.22
+
 
 # Vector DB
-chromadb==0.3.26
+# chromadb==0.3.26
 
 # PDF loader dependency used by PyPDFLoader
 pypdf==3.11.0
