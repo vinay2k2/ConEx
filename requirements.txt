@@ -1,7 +1,23 @@
-streamlit
-crewai
-langchain-openai==1.0.1
-langchain-community==1.0.1   # or just langchain-community, or another compatible version
-langchain-core==1.0.1
-pydantic
-requests
+# Core app framework
+streamlit=1.37.0
+
+# CrewAI agentic framework
+crewai=0.28.0
+crewai-tools=0.1.0
+
+# LangChain for RAG pipeline
+langchain=0.2.14
+langchain-community=0.2.8
+langchain-openai=0.1.15
+
+# Vector databases (choose the one you use; keep only relevant ones)
+chromadb=0.5.5
+
+# Embeddings and LLMs
+openai=1.43.0
+tiktoken=0.7.0
+
+
+# Optional visualization / UI helpers
+plotly=5.24.0
+streamlit-extras=0.4.0
