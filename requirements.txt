@@ -8,6 +8,7 @@ crewai
 langchain==0.2.14
 langchain-core==0.2.34
 langchain-community==0.2.10
+langchain-openai
 
 # Vector DB
 chromadb==0.3.26
@@ -25,4 +26,4 @@ requests==2.31.0
 typing-extensions==4.7.1
 
 # force Pydantic v1 to avoid pydantic v2 incompatibilities with older langchain layout
-pydantic==1.10.12
+# pydantic==1.10.12
