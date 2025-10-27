@@ -97,6 +97,7 @@ def download_and_index_pdf(url_or_file, is_url=False):
     openai_key = st.session_state.api_keys.get('openai')
     embedder = st.session_state.get('embedder') 
     
+    # Use .strip() for safety
     if not openai_key or not embedder:
         st.error("Cannot index document: Please click 'Initialize Agents and Tools' first.")
         return
@@ -149,6 +150,7 @@ def download_and_index_pdf(url_or_file, is_url=False):
             chunks = text_splitter.split_documents(documents)
             
             # 3. Create FAISS Vector Store
+            # The embedder is used here, and it was initialized in setup_llm_and_tools.
             faiss_instance = FAISS.from_documents( 
                 documents=chunks, 
                 embedding=embedder,
@@ -171,26 +173,29 @@ def download_and_index_pdf(url_or_file, is_url=False):
 
 def setup_llm_and_tools():
     """Sets up the LLM and Embedder, caching them."""
-    openai_key = st.session_state.api_keys['openai'] 
+    # Use .strip() for safety
+    openai_key = st.session_state.api_keys['openai'].strip() 
     
     if not openai_key:
         st.error("Please enter your OpenAI API Key to initialize the LLM and Embedder.") 
         return None
     
+    # CRITICAL FIX: Set the environment variable. CrewAI/LangChain often relies on this.
+    os.environ['OPENAI_API_KEY'] = openai_key 
+    
     try:
         # 1. Initialize OpenAI LLM
-        # FIX: Explicitly pass api_key to the ChatOpenAI constructor
+        # The constructors now pick up the key from os.environ, but we pass it explicitly too for robustness.
         llm = ChatOpenAI( 
-            api_key=openai_key,
+            api_key=openai_key, # Explicitly passing key
             model_name="gpt-4o-mini", 
             temperature=0.1
         )
         st.session_state.llm = llm
         
         # 2. Initialize OpenAI Embeddings
-        # FIX: Explicitly pass api_key to the OpenAIEmbeddings constructor
         embedder = OpenAIEmbeddings(
-            api_key=openai_key,
+            api_key=openai_key, # Explicitly passing key
             model="text-embedding-3-small"
         )
         st.session_state.embedder = embedder
@@ -198,6 +203,10 @@ def setup_llm_and_tools():
         return llm 
         
     except Exception as e:
+        # Remove the env key if initialization fails to prevent errors on the next attempt
+        if 'OPENAI_API_KEY' in os.environ:
+            del os.environ['OPENAI_API_KEY']
+            
         # The CrewAI error will often be triggered here if the key is invalid
         st.error(f"Failed to initialize LLM/Embedder. Check your API key. Error: {e}")
         st.session_state.llm = None 
@@ -361,7 +370,6 @@ def main_app():
                 if not concept_input_value:
                     st.error("Please enter a concept (e.g., 'self attention', 'transformer model') to search.")
                     # We return early here since the input was empty
-                    # No need for an extra rerun as the user can now just type and click submit again
                     return
 
                 # Re-initialize LLM to ensure it is available (safety check)
