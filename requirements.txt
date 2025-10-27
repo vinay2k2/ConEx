@@ -1,5 +1,7 @@
-crewai==0.28.8 
-crewai_tools==0.1.6 
-langchain_community==0.0.29 
-sentence-transformers 
-langchain-groq 
+streamlit
+crewai
+langchain-openai
+langchain-community
+faiss-cpu
+pypdf
+requests
