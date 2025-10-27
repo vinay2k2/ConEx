@@ -1,7 +1,7 @@
 streamlit
 crewai
-langchain-openai
-langchain-community
-langchain-core
+langchain-openai==0.4.1
+langchain-community==0.0.30
+langchain-core==0.1.37
 pydantic
 requests
