@@ -1,4 +1,56 @@
+"""
+====================================================================================
+Purpose        : Agentic RAG Streamlit Application — Multi-Document Concept Explainer
+File Name      : app.py
+Author         : Vinay Kumar
+Organization   : For IIT Madras Program
+Date Developed : 2025-10-27
+Last Modified  : 2025-10-28
+Version        : 1.0.0
+Python Version : 3.12
+Framework      : Streamlit
+AI Frameworks  : LangChain, CrewAI, OpenAI API
+Vector Store   : FAISS (In-Memory)
+Embeddings     : text-embedding-3-small
+LLM Model      : gpt-4o-mini
+------------------------------------------------------------------------------------
+Description    :
+This application enables researchers and AI practitioners to upload or link 
+multiple academic PDF papers and interact with them using an Agentic RAG (Retrieval 
+Augmented Generation) system. It builds an intelligent multi-agent pipeline where 
+one agent retrieves relevant information across all indexed PDFs, and another agent 
+summarizes and explains the requested concept clearly.
 
+The Streamlit interface provides:
+  - API key management (OpenAI)
+  - PDF upload and indexing (up to 5 documents)
+  - Real-time RAG-based querying and concept explanation
+  - Chat-style responses with citation-aware answers
+  - FAISS-based in-memory retrieval for fast search
+  - Multi-agent reasoning powered by CrewAI and LangChain
+
+------------------------------------------------------------------------------------
+Core Components:
+1. init_session_state()        : Initializes Streamlit session variables and caches.
+2. multi_rag_tool()            : Cross-document retrieval using FAISS Vector Store.
+3. clean_filename()            : Sanitizes filenames and prepares display titles.
+4. download_and_index_pdf()    : Downloads, splits, embeds, and indexes PDF documents.
+5. setup_llm_and_tools()       : Initializes OpenAI LLM and embedding models.
+6. reset_app_state_callback()  : Clears the conversation and resets concept input.
+7. main_app()                  : Defines the Streamlit UI flow and orchestrates agents.
+
+------------------------------------------------------------------------------------
+Usage Example:
+Run this app with Streamlit CLI:
+    $ streamlit run app.py
+
+------------------------------------------------------------------------------------
+Dependencies:See requirements.txt
+------------------------------------------------------------------------------------
+Future Enhancements:
+    - Add live search option
+====================================================================================
+"""
 # Top level imports
 # Standard utilities
 import os
