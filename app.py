@@ -3,7 +3,7 @@
 Purpose        : Agentic RAG Streamlit Application — Multi-Document Concept Explainer
 File Name      : app.py
 Author         : Vinay Kumar
-Organization   : For IIT Madras Program
+Organization   : QC
 Date Developed : 2025-10-27
 Last Modified  : 2025-10-28
 Version        : 1.0.0
