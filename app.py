@@ -1,21 +1,32 @@
-import streamlit as st 
+
+# Top level imports
+# Standard utilities
 import os
 import tempfile
 import uuid
 import requests
 import json
+# Load PDF content into LangChain Document objects.
+from langchain_community.document_loaders import PyPDFLoader
+# split long docs into chunks for retrieval.
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+# LLM and embedding wrapper used by LangChain-style integrations (OpenAI provider).
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings 
+# in-memory FAISS vector store 
+from langchain_community.vectorstores import FAISS 
+# Streamlit for render and interaction
+import streamlit as st
+# CrewAI primitives: define agents, tasks and decorate tools that agents can call.
 from crewai import Crew, Task, Agent
 from crewai.tools import tool 
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings # Imports the class for LLM and Embeddings
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS 
+
+
+
 
 # --- 1. Streamlit Session State Initialization ---
 
 def init_session_state():
     """Initializes all necessary session state variables."""
-    # Ensure OPENAI_API_KEY is pulled from environment first if available
     if 'api_keys' not in st.session_state:
         st.session_state.api_keys = {
             "openai": os.environ.get('OPENAI_API_KEY', ''), 
@@ -44,12 +55,11 @@ def init_session_state():
 
 
 # --- 2. CrewAI Tool Definitions ---
-
 @tool("Multi-Document RAG Search")
 def multi_rag_tool(question: str) -> str:
     """
     Searches across all currently indexed documents (In-Memory Vector Stores)
-    for relevant information based on the user's question.
+    for relevant information based on the user's query.
     """
     results = []
     indexed_docs = st.session_state.indexed_docs
@@ -84,7 +94,6 @@ def multi_rag_tool(question: str) -> str:
     return "\n\n".join(results)
 
 # --- 3. Utility Functions ---
-
 def clean_filename(filename):
     """Cleans up filenames for better display titles."""
     name, _ = os.path.splitext(os.path.basename(filename))
@@ -95,9 +104,8 @@ def download_and_index_pdf(url_or_file, is_url=False):
     """Downloads or saves a PDF and indexes it using LangChain/FAISS."""
     
     openai_key = st.session_state.api_keys.get('openai')
-    embedder = st.session_state.get('embedder') 
+    embedder = st.session_state.get('embedder') # Get initialized embedder
     
-    # Use .strip() for safety
     if not openai_key or not embedder:
         st.error("Cannot index document: Please click 'Initialize Agents and Tools' first.")
         return
@@ -150,20 +158,19 @@ def download_and_index_pdf(url_or_file, is_url=False):
             chunks = text_splitter.split_documents(documents)
             
             # 3. Create FAISS Vector Store
-            # The embedder is used here, and it was initialized in setup_llm_and_tools.
             faiss_instance = FAISS.from_documents( 
                 documents=chunks, 
                 embedding=embedder,
-                # Removed persistence arguments as FAISS is used in-memory for the session
+                
             )
             
             st.session_state.indexed_docs.append({
                 'id': str(uuid.uuid4()),
                 'name': display_name,
                 'path': temp_filepath,
-                'tool': faiss_instance # Storing the FAISS instance
+                'tool': faiss_instance 
             })
-            st.success(f"Successfully indexed: **{display_name}** using In-Memory Vector Store (FAISS).") 
+            st.success(f"Successfully indexed: **{display_name}** using In-Memory Vector Store (FAISS).") # UPDATED MESSAGE
             
     except Exception as e:
         st.error(f"Failed to index document. Check URL, file format, or API key. Error: {e}")
@@ -173,21 +180,16 @@ def download_and_index_pdf(url_or_file, is_url=False):
 
 def setup_llm_and_tools():
     """Sets up the LLM and Embedder, caching them."""
-    # Use .strip() for safety
-    openai_key = st.session_state.api_keys['openai'].strip() 
+    openai_key = st.session_state.api_keys['openai'] 
     
     if not openai_key:
         st.error("Please enter your OpenAI API Key to initialize the LLM and Embedder.") 
         return None
     
-    # CRITICAL FIX: Set the environment variable. CrewAI/LangChain often relies on this.
-    os.environ['OPENAI_API_KEY'] = openai_key 
-    
     try:
         # 1. Initialize OpenAI LLM
-        # The constructors now pick up the key from os.environ, but we pass it explicitly too for robustness.
         llm = ChatOpenAI( 
-            api_key=openai_key, # Explicitly passing key
+            api_key=openai_key,
             model_name="gpt-4o-mini", 
             temperature=0.1
         )
@@ -195,7 +197,7 @@ def setup_llm_and_tools():
         
         # 2. Initialize OpenAI Embeddings
         embedder = OpenAIEmbeddings(
-            api_key=openai_key, # Explicitly passing key
+            api_key=openai_key,
             model="text-embedding-3-small"
         )
         st.session_state.embedder = embedder
@@ -203,14 +205,9 @@ def setup_llm_and_tools():
         return llm 
         
     except Exception as e:
-        # Remove the env key if initialization fails to prevent errors on the next attempt
-        if 'OPENAI_API_KEY' in os.environ:
-            del os.environ['OPENAI_API_KEY']
-            
-        # The CrewAI error will often be triggered here if the key is invalid
         st.error(f"Failed to initialize LLM/Embedder. Check your API key. Error: {e}")
-        st.session_state.llm = None 
-        st.session_state.embedder = None 
+        st.session_state.llm = None # Ensure it is None on failure
+        st.session_state.embedder = None # Ensure embedder is also None on failure
         return None
 
 # CALLBACK FUNCTION to reset state for the "Start New Concept" button
@@ -226,8 +223,8 @@ def reset_app_state_callback():
 def main_app():
     init_session_state()
 
-    st.set_page_config(layout="wide", page_title="Agentic RAG Explainer")
-    st.title("📚 Agentic RAG Explainer (OpenAI RAG Only)")
+    st.set_page_config(layout="wide", page_title="Concept Explainer")
+    st.title("📚 Upload Paper, Understand Concepts")
     
     # --- UI Layout ---
     col_upload, col_chat = st.columns([1, 2])
@@ -238,7 +235,7 @@ def main_app():
         # 1. User Name
         st.session_state.user_name = st.text_input("Hi! What's your name?", value=st.session_state.user_name)
 
-        st.subheader("OpenAI API Key (Required)")
+        st.subheader("OpenAI API Key (Required), we do not store it beyond the current session")
         st.session_state.api_keys['openai'] = st.text_input( 
             "OpenAI API Key (for LLM)", type="password", 
             value=st.session_state.api_keys['openai'], help="Used for all Agent reasoning and summarization and embedding."
@@ -259,8 +256,8 @@ def main_app():
             llm = setup_llm_and_tools()
             if llm:
                 st.success("LLM and Vector Store/Embedder Initialized! Ready for RAG.") 
-                st.balloons()
-                st.rerun() 
+                # st.balloons()
+                st.rerun() # Rerun to update button state immediately
             else:
                 st.error("Initialization failed. Please check your API key.")
 
@@ -315,15 +312,10 @@ def main_app():
                 st.markdown(f"- :white_check_mark: `{doc['name']}`")
         else:
             st.info("No documents indexed yet.")
-            
-    # --- Right Column: Chat and Concept Input (MODIFIED) ---
-    with col_chat:
-        st.header(f"3. Concept Chat with {st.session_state.user_name}")
         
+        # --- DEBUG VISUALIZATION ---
         # Check if the prerequisites for search are met (LLM & Docs indexed)
         is_ready_to_search_prereqs = is_llm_initialized and st.session_state.indexed_docs
-
-        # --- DEBUG VISUALIZATION ---
         st.caption("--- DEBUG STATUS (Internal Use) ---")
         st.json({
             "is_llm_initialized": is_llm_initialized,
@@ -335,6 +327,26 @@ def main_app():
         })
         st.caption("-----------------------------------")
         # --- END DEBUG VISUALIZATION ---
+            
+    # --- Right Column: Chat and Concept Input (MODIFIED) ---
+    with col_chat:
+        st.header(f"3. Concept Chat with {st.session_state.user_name}")
+        
+        # Check if the prerequisites for search are met (LLM & Docs indexed)
+        # is_ready_to_search_prereqs = is_llm_initialized and st.session_state.indexed_docs
+
+        # # --- DEBUG VISUALIZATION ---
+        # st.caption("--- DEBUG STATUS (Internal Use) ---")
+        # st.json({
+        #     "is_llm_initialized": is_llm_initialized,
+        #     "indexed_docs_count": len(st.session_state.indexed_docs),
+        #     # Note: concept_input_main state value is often empty at render time inside a form
+        #     "concept_input_current_state": st.session_state.concept_input_main.strip(), 
+        #     "is_ready_to_search_prereqs": is_ready_to_search_prereqs,
+        #     "button_disabled_status": not is_ready_to_search_prereqs
+        # })
+        # st.caption("-----------------------------------")
+        # # --- END DEBUG VISUALIZATION ---
 
         if not is_llm_initialized:
             st.warning("Prerequisite: Please **Initialize Agents and Tools** on the left first.")
@@ -370,6 +382,7 @@ def main_app():
                 if not concept_input_value:
                     st.error("Please enter a concept (e.g., 'self attention', 'transformer model') to search.")
                     # We return early here since the input was empty
+                    # No need for an extra rerun as the user can now just type and click submit again
                     return
 
                 # Re-initialize LLM to ensure it is available (safety check)
@@ -450,10 +463,6 @@ def main_app():
                         # We pass the same value via a different key for simplicity
                         result = execution_crew.kickoff(inputs={"concept": concept_input_value, "concept_input_main": concept_input_value})
                         st.session_state.chat_history.append({"role": "agent", "content": result})
-                        # 🎉 Trigger celebration animation after successful completion
-                        st.success("Concept explanation generated successfully!")
-                        st.balloons()
-                        
                         
                     except Exception as e:
                         st.session_state.chat_history.append({"role": "agent", "content": f"**Error:** The Crew failed to complete the task. This often happens if the API key is incorrect or the LLM output broke the expected format. Please check your **OpenAI API Key** and **Console Log** for details. Error message: `{e}`"})
@@ -469,6 +478,7 @@ def main_app():
             for message in st.session_state.chat_history:
                 with chat_container.chat_message(message["role"]):
                     st.markdown(message["content"])
+                    st.balloons()
 
             # 4. Follow-up Options 
             if st.session_state.chat_history and st.session_state.chat_history[-1]["role"] == "agent":
