@@ -97,8 +97,8 @@ def multi_rag_tool(question: str) -> str:
 def clean_filename(filename):
     """Cleans up filenames for better display titles."""
     name, _ = os.path.splitext(os.path.basename(filename))
-    name = name.replace('_', ' ').replace('-', ' ').title()
-    return ''.join(name[-5:]) # Take first three words
+    # name = name.replace('_', ' ').replace('-', ' ').title()
+    return ''.join(_[-5:]) # Take first three words
 
 def download_and_index_pdf(url_or_file, is_url=False):
     """Downloads or saves a PDF and indexes it using LangChain/FAISS."""
