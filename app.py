@@ -224,7 +224,7 @@ def main_app():
     init_session_state()
 
     st.set_page_config(layout="wide", page_title="Concept Explainer")
-    st.title("📚 Upload Paper, Understand Concepts")
+    st.title("📚 Agentic RAG Streamlit Application — Multi-Document Concept Explainer")
     
     # --- UI Layout ---
     col_upload, col_chat = st.columns([1, 2])
