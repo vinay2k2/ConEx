@@ -24,3 +24,17 @@ This application provides a **research-assistant-style platform** where users ca
 - ✅ Streamlit UI with real-time interaction
 - ✅ Session caching and reruns for seamless UX
 - ✅ In-memory, privacy-preserving local processing
+
+## 🚀 Core Functionality Overview
+
+<aside>
+1. Streamlit Frontend
+
+The app runs an interactive **Streamlit interface** with two main sections:
+
+- **Left Panel:** Handles initialization, OpenAI API setup, and PDF uploads (or URL-based downloads)
+- **Right Panel:** Enables the user to chat with the uploaded papers and explore scientific concepts
+
+All application states (API key, docs, embeddings, chat history) are stored in **Streamlit's session state** for persistence during runtime.
+
+</aside>
