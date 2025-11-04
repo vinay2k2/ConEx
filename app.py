@@ -61,7 +61,7 @@ import json
 # Load PDF content into LangChain Document objects.
 from langchain_community.document_loaders import PyPDFLoader
 # split long docs into chunks for retrieval.
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 # LLM and embedding wrapper used by LangChain-style integrations (OpenAI provider).
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings 
 # in-memory FAISS vector store 
