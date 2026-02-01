@@ -1,527 +1,169 @@
-"""
-====================================================================================
-Purpose        : Agentic RAG Streamlit Application — Multi-Document Concept Explainer
-File Name      : app.py
-Author         : Vinay Kumar
-Organization   : QC
-Date Developed : 2025-10-27
-Last Modified  : 2026-02-01
-Version        : 1.0.2
-Python Version : 3.12
-Framework      : Streamlit
-AI Frameworks  : LangChain, CrewAI, OpenAI API
-Vector Store   : FAISS (In-Memory)
-Embeddings     : text-embedding-3-small
-LLM Model      : gpt-4o-mini
-------------------------------------------------------------------------------------
-Key Fixes (v1.0.2):
-  1) PDF Unicode/ASCII crash fix:
-     - Normalize & sanitize extracted PDF text (e.g., →) before chunking/embedding.
-     - Force stdout/stderr to UTF-8 in some runtimes.
-  2) CrewAI ImportError fix:
-     - Use CrewAI-native LLM (crewai.LLM) for Agent(..., llm=...)
-     - Keep LangChain only for embeddings + FAISS.
-  3) clean_filename() bug fix:
-     - Previously returned extension chars; now returns a readable base filename.
-====================================================================================
-"""
-
-# -----------------------
-# Top level imports
-# -----------------------
 import os
-import re
-import sys
-import uuid
-import tempfile
-import unicodedata
-import requests
+import time
+from typing import List, Dict, Any
 
 import streamlit as st
+from dotenv import load_dotenv
 
-# LangChain (PDF loading, chunking, embeddings, FAISS)
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import RSSFeedLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.vectorstores import FAISS
 
-# CrewAI (agents/tools/tasks)
-from crewai import Crew, Task, Agent, LLM
-from crewai.tools import tool
+load_dotenv()
 
 
-# -----------------------
-# Console encoding safety (helps on Streamlit Cloud / some terminals)
-# -----------------------
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
-if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8")
-
-
-# -----------------------
-# 0) Text normalization / sanitization (prevents ASCII codec errors)
-# -----------------------
-def normalize_pdf_text(t: str) -> str:
+# -------------------------
+# Helpers
+# -------------------------
+def build_vectorstore_from_medium_rss(
+    rss_urls: List[str],
+    openai_api_key: str,
+    max_items_per_feed: int = 25,
+) -> FAISS:
     """
-    Normalize and sanitize PDF-extracted text to avoid Unicode/ASCII codec issues.
-    Keeps content readable while replacing some common problematic glyphs.
+    Loads articles via RSS, splits them, and indexes into FAISS.
+    Keeps Medium link/title in metadata for source display.
     """
-    if not t:
-        return ""
+    loader = RSSFeedLoader(urls=rss_urls)
+    docs = loader.load()
 
-    t = unicodedata.normalize("NFKC", t)
+    # Optional: cap volume to keep it “simple and fast”
+    docs = docs[: max_items_per_feed * max(1, len(rss_urls))]
 
-    # Replace common PDF typography / symbols that often show up
-    t = (
-        t.replace("\u2192", "->")   # →
-         .replace("\u2190", "<-")   # ←
-         .replace("\u2013", "-")    # –
-         .replace("\u2014", "-")    # —
-         .replace("\u00a0", " ")    # non-breaking space
-    )
-
-    # Remove non-printable ASCII control chars (keep \n and \t)
-    t = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", t)
-    return t
-
-
-# -----------------------
-# 1) Streamlit Session State Initialization
-# -----------------------
-def init_session_state():
-    """Initializes all necessary session state variables."""
-    if "api_keys" not in st.session_state:
-        st.session_state.api_keys = {
-            "openai": os.environ.get("OPENAI_API_KEY", ""),
+    # Ensure link/title exist in metadata (RSSFeedLoader generally includes these, but we normalize)
+    for d in docs:
+        md = d.metadata or {}
+        d.metadata = {
+            "source": md.get("link") or md.get("source") or "",
+            "title": md.get("title") or md.get("title_detail") or "Medium Article",
+            "published": md.get("published") or md.get("pubDate") or "",
         }
 
-    if "user_name" not in st.session_state:
-        st.session_state.user_name = "Researcher"
+    splitter = RecursiveCharacterTextSplitter(chunk_size=900, chunk_overlap=150)
+    chunks = splitter.split_documents(docs)
 
-    if "indexed_docs" not in st.session_state:
-        # Stores {'id': str, 'name': str, 'path': str, 'tool': FAISSInstance}
-        st.session_state.indexed_docs = []
-
-    if "temp_dir" not in st.session_state:
-        st.session_state.temp_dir = tempfile.mkdtemp()
-
-    if "max_docs" not in st.session_state:
-        st.session_state.max_docs = 5
-
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-
-    # CrewAI native LLM
-    if "crewai_llm" not in st.session_state:
-        st.session_state.crewai_llm = None
-
-    # LangChain embedder (for FAISS)
-    if "embedder" not in st.session_state:
-        st.session_state.embedder = None
-
-    if "uploaded_files_cache" not in st.session_state:
-        st.session_state.uploaded_files_cache = []
-
-    if "concept_input_main" not in st.session_state:
-        st.session_state.concept_input_main = ""
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small", api_key=openai_api_key)
+    vs = FAISS.from_documents(chunks, embeddings)
+    return vs
 
 
-# -----------------------
-# 2) CrewAI Tool Definitions
-# -----------------------
-@tool("Multi-Document RAG Search")
-def multi_rag_tool(question: str) -> str:
+def format_sources(retrieved_docs) -> List[Dict[str, Any]]:
     """
-    Searches across all currently indexed documents (In-Memory FAISS Vector Stores)
-    for relevant information based on the user's query.
+    Deduplicate sources by URL and return a compact list.
     """
-    results = []
-    indexed_docs = st.session_state.indexed_docs
-
-    if not indexed_docs:
-        return "No documents indexed. Please upload a PDF or enter a URL first."
-
-    for doc in indexed_docs:
-        vector_store_instance = doc["tool"]
-        doc_name = doc["name"]
-
-        try:
-            retrieved_docs = vector_store_instance.similarity_search(query=question, k=4)
-
-            if retrieved_docs:
-                for retrieved_doc in retrieved_docs:
-                    content = retrieved_doc.page_content
-                    page = retrieved_doc.metadata.get("page", "N/A")
-                    results.append(
-                        f"--- SOURCE: {doc_name} (Page {page}) ---\n"
-                        f"{content}\n"
-                        f"--- END SOURCE ---"
-                    )
-
-        except Exception as e:
-            # Keep logging unicode-safe
-            print(f"Error querying {doc_name} from FAISS/VectorStore: {repr(e)}")
-
-    if not results:
-        return "Internal RAG search yielded no relevant information across all indexed documents."
-
-    return "\n\n".join(results)
+    seen = set()
+    sources = []
+    for d in retrieved_docs:
+        url = (d.metadata or {}).get("source", "")
+        title = (d.metadata or {}).get("title", "Medium Article")
+        published = (d.metadata or {}).get("published", "")
+        if url and url not in seen:
+            seen.add(url)
+            sources.append({"title": title, "url": url, "published": published})
+    return sources
 
 
-# -----------------------
-# 3) Utility Functions
-# -----------------------
-def clean_filename(filename: str) -> str:
-    """Cleans up filenames for better display titles."""
-    base = os.path.splitext(os.path.basename(filename))[0]
-    base = base.replace("_", " ").replace("-", " ").strip()
-    return (base[:40] + "…") if len(base) > 40 else (base or "Document")
+# -------------------------
+# UI
+# -------------------------
+st.set_page_config(page_title="Medium RAG Chatbot", layout="wide")
+st.title("Medium RAG Chatbot (LangChain + OpenAI)")
 
+with st.sidebar:
+    st.header("Setup")
 
-def setup_llm_and_tools():
-    """
-    Sets up:
-      - CrewAI native LLM (for Agent llm=...)
-      - LangChain embedder (for FAISS indexing)
-    """
-    openai_key = st.session_state.api_keys.get("openai", "").strip()
+    api_key = st.text_input(
+        "OpenAI API Key",
+        type="password",
+        value=os.getenv("OPENAI_API_KEY", ""),
+    )
 
-    if not openai_key:
-        st.error("Please enter your OpenAI API Key to initialize the LLM and Embedder.")
-        return None
+    st.caption("Enter one RSS URL per line (profiles/publications/topics).")
+    rss_text = st.text_area(
+        "Medium RSS feed URLs",
+        value="https://medium.com/feed/@TowardsDataScience\nhttps://medium.com/feed/tag/llm",
+        height=140,
+    )
+    rss_urls = [u.strip() for u in rss_text.splitlines() if u.strip()]
 
-    # Ensure provider libs can see the key (important on Streamlit Cloud)
-    os.environ["OPENAI_API_KEY"] = openai_key
+    max_items = st.slider("Max items per feed (cap)", 5, 50, 25, 5)
 
-    try:
-        # CrewAI native LLM (Fix for the ImportError you saw)
-        crewai_llm = LLM(
-            model="gpt-4o-mini",
-            temperature=0.1,
-            api_key=openai_key
-        )
-        st.session_state.crewai_llm = crewai_llm
-
-        # LangChain embedder for FAISS
-        embedder = OpenAIEmbeddings(
-            api_key=openai_key,
-            model="text-embedding-3-small"
-        )
-        st.session_state.embedder = embedder
-
-        return crewai_llm
-
-    except Exception as e:
-        st.session_state.crewai_llm = None
-        st.session_state.embedder = None
-        st.error(f"Failed to initialize LLM/Embedder. Check your API key. Error: {e}")
-        return None
-
-
-def download_and_index_pdf(url_or_file, is_url: bool = False):
-    """Downloads or saves a PDF and indexes it using LangChain/FAISS."""
-    openai_key = st.session_state.api_keys.get("openai", "").strip()
-    embedder = st.session_state.get("embedder")
-
-    if not openai_key or not embedder:
-        st.error("Cannot index document: Please click 'Initialize Agents and Tools' first.")
-        return
-
-    if len(st.session_state.indexed_docs) >= st.session_state.max_docs:
-        st.error(f"Cannot upload more than {st.session_state.max_docs} documents.")
-        return
-
-    temp_filepath = os.path.join(st.session_state.temp_dir, f"{uuid.uuid4()}.pdf")
-
-    try:
-        # --- File download/save ---
-        if is_url:
-            st.info(f"Downloading PDF from: {url_or_file}...")
-            response = requests.get(url_or_file, stream=True, timeout=30)
-            response.raise_for_status()
-            with open(temp_filepath, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-
-            file_name_candidate = url_or_file.split("/")[-1].split("?")[0]
-            file_name = clean_filename(file_name_candidate) if len(file_name_candidate) > 5 else "URL Document"
-
+    if st.button("Build / Rebuild Index", use_container_width=True):
+        if not api_key:
+            st.error("Enter your OpenAI API key.")
+        elif not rss_urls:
+            st.error("Provide at least one RSS URL.")
         else:
-            st.info(f"Saving uploaded file: {url_or_file.name}...")
-            with open(temp_filepath, "wb") as f:
-                f.write(url_or_file.getbuffer())
-            file_name = clean_filename(url_or_file.name)
-
-        doc_index = len(st.session_state.indexed_docs) + 1
-        display_name = f"Paper {doc_index} - {file_name}"
-
-        # --- Indexing (FAISS in-memory) ---
-        with st.spinner(f"Indexing '{display_name}' with In-Memory Vector Store (FAISS)..."):
-            loader = PyPDFLoader(temp_filepath)
-            documents = loader.load()
-
-            # Fix: normalize/sanitize PDF text to avoid ascii/unicode codec errors downstream
-            for d in documents:
-                d.page_content = normalize_pdf_text(d.page_content)
-
-            splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-            chunks = splitter.split_documents(documents)
-
-            faiss_instance = FAISS.from_documents(documents=chunks, embedding=embedder)
-
-            st.session_state.indexed_docs.append({
-                "id": str(uuid.uuid4()),
-                "name": display_name,
-                "path": temp_filepath,
-                "tool": faiss_instance
-            })
-
-        st.success(f"Successfully indexed: **{display_name}** using In-Memory Vector Store (FAISS).")
-
-    except Exception as e:
-        st.error(f"Failed to index document. Check URL, file format, or API key. Error: {e}")
-        if os.path.exists(temp_filepath):
-            os.remove(temp_filepath)
-
-
-def reset_app_state_callback():
-    """Resets chat history and clears the concept input value."""
-    st.session_state.chat_history = []
-    st.session_state.concept_input_main = ""
-
-
-# -----------------------
-# 4) Main Streamlit Logic
-# -----------------------
-def main_app():
-    init_session_state()
-
-    st.set_page_config(layout="wide", page_title="Concept Explainer")
-    st.title("📚 Agentic RAG Streamlit Application — Multi-Document Concept Explainer")
-
-    col_upload, col_chat = st.columns([1, 2])
-
-    # -----------------------
-    # Left column (Setup + Docs)
-    # -----------------------
-    with col_upload:
-        st.header("1. Setup & Documents")
-
-        st.session_state.user_name = st.text_input("Hi! What's your name?", value=st.session_state.user_name)
-
-        st.subheader("OpenAI API Key (Required), we do not store it beyond the current session")
-        st.session_state.api_keys["openai"] = st.text_input(
-            "OpenAI API Key (for LLM)",
-            type="password",
-            value=st.session_state.api_keys.get("openai", ""),
-            help="Used for agent reasoning (CrewAI) and embeddings (LangChain)."
-        )
-
-        is_initialized = st.session_state.get("crewai_llm") is not None and st.session_state.get("embedder") is not None
-
-        if is_initialized:
-            button_text = "Agents and Tools INITIALIZED"
-            button_type = "primary"
-        else:
-            button_text = "Initialize Agents and Tools"
-            button_type = "secondary"
-
-        if st.button(button_text, key="init_button", type=button_type, disabled=is_initialized):
-            crewai_llm = setup_llm_and_tools()
-            if crewai_llm:
-                st.success("✅ LLM (CrewAI) and Embedder (LangChain) initialized. Ready for RAG.")
-                st.rerun()
-
-        if is_initialized:
-            st.success("✅ **STATUS: LLM + Embedder are ready.**")
-        else:
-            st.info("Status: Waiting for initialization.")
-
-        st.subheader(f"2. Index Documents ({len(st.session_state.indexed_docs)}/{st.session_state.max_docs})")
-
-        if len(st.session_state.indexed_docs) < st.session_state.max_docs and is_initialized:
-            uploaded_files = st.file_uploader(
-                "Upload PDF files (drag & drop, up to 5 total)",
-                type=["pdf"],
-                accept_multiple_files=True
-            )
-
-            if uploaded_files:
-                cached_names = [f.name for f in st.session_state.uploaded_files_cache]
-                new_files = [f for f in uploaded_files if f.name not in cached_names]
-
-                for f in new_files:
-                    download_and_index_pdf(f, is_url=False)
-
-                st.session_state.uploaded_files_cache = uploaded_files
-
-                if new_files:
-                    st.rerun()
-
-            with st.form("url_form", clear_on_submit=True):
-                url_input = st.text_input("Or submit a PDF URL (one at a time)", key="url_input_form")
-                submitted_url = st.form_submit_button("Submit URL")
-                if submitted_url and url_input:
-                    download_and_index_pdf(url_input, is_url=True)
-                    st.rerun()
-
-        elif not is_initialized:
-            st.info("Initialize Agents and Tools first to enable document upload.")
-        else:
-            st.info(f"Maximum of {st.session_state.max_docs} documents indexed. Delete files to add new ones.")
-
-        st.markdown("---")
-        st.subheader("Indexed Documents")
-        if st.session_state.indexed_docs:
-            for doc in st.session_state.indexed_docs:
-                st.markdown(f"- :white_check_mark: `{doc['name']}`")
-        else:
-            st.info("No documents indexed yet.")
-
-        # Debug status
-        st.caption("--- DEBUG STATUS (Internal Use) ---")
-        st.json({
-            "initialized": is_initialized,
-            "indexed_docs_count": len(st.session_state.indexed_docs),
-            "concept_input_current_state": st.session_state.concept_input_main.strip()
-        })
-        st.caption("-----------------------------------")
-
-    # -----------------------
-    # Right column (Chat)
-    # -----------------------
-    with col_chat:
-        st.header(f"3. Concept Chat with {st.session_state.user_name}")
-
-        if not is_initialized:
-            st.warning("Prerequisite: Please **Initialize Agents and Tools** on the left first.")
-        elif not st.session_state.indexed_docs:
-            st.warning("Prerequisite: Please **Index at least one Document** first.")
-
-        ready_to_search = bool(is_initialized and st.session_state.indexed_docs)
-
-        # Search form (only if initialized)
-        if is_initialized:
-            with st.form("concept_search_form", clear_on_submit=True):
-                st.text_input(
-                    "Enter a concept to search and explain using the indexed documents:",
-                    key="concept_input_main"
+            with st.spinner("Loading RSS + indexing into FAISS..."):
+                st.session_state.vs = build_vectorstore_from_medium_rss(
+                    rss_urls=rss_urls,
+                    openai_api_key=api_key,
+                    max_items_per_feed=max_items,
                 )
-
-                submitted = st.form_submit_button(
-                    "Search Indexed Documents (RAG)",
-                    disabled=not ready_to_search,
-                    use_container_width=True
-                )
-
-            if submitted:
-                concept = st.session_state.concept_input_main.strip()
-                if not concept:
-                    st.error("Please enter a concept (e.g., 'self attention', 'transformer model') to search.")
-                    return
-
-                # Use cached CrewAI LLM; initialize if missing
-                crewai_llm = st.session_state.get("crewai_llm") or setup_llm_and_tools()
-                if not crewai_llm:
-                    return
-
-                # Agents MUST receive CrewAI-native LLM (not LangChain ChatOpenAI)
-                retriever_agent = Agent(
-                    role="Document Retriever",
-                    goal="Execute RAG search against indexed documents (FAISS) and gather raw content.",
-                    backstory=(
-                        "You are a search specialist for academic papers. You must use the `multi_rag_tool` "
-                        "to search indexed PDFs. Output must include raw chunks with paper name + page number."
-                    ),
-                    verbose=False,
-                    allow_delegation=False,
-                    llm=crewai_llm,
-                    tools=[multi_rag_tool]
-                )
-
-                summarizer_agent = Agent(
-                    role="Concept Explainer and Summarizer",
-                    goal="Synthesize retrieved content into a clear, concise explanation with sources.",
-                    backstory=(
-                        "You are a researcher-tutor. You take raw RAG chunks, remove redundancy, and explain "
-                        "the concept clearly. Always include 'Sources Used' with paper names and page numbers."
-                    ),
-                    verbose=False,
-                    allow_delegation=False,
-                    llm=crewai_llm
-                )
-
-                retriever_task = Task(
-                    description=(
-                        f"Execute RAG search for the concept: '{concept}' using the `multi_rag_tool`. "
-                        "Return raw search results including source names and page numbers."
-                    ),
-                    expected_output="Raw sourced chunks from indexed PDFs relevant to the concept.",
-                    agent=retriever_agent
-                )
-
-                summarizer_task = Task(
-                    description=(
-                        f"Using the raw results, explain the concept '{concept}' clearly. "
-                        "Provide a structured answer and end with 'Sources Used:' listing all papers + page numbers."
-                    ),
-                    expected_output=(
-                        "A clear explanation + bullet points + 'Sources Used:' section with paper/page citations."
-                    ),
-                    agent=summarizer_agent,
-                    context=[retriever_task]
-                )
-
-                execution_crew = Crew(
-                    agents=[retriever_agent, summarizer_agent],
-                    tasks=[retriever_task, summarizer_task],
-                    verbose=1
-                )
-
-                st.session_state.chat_history.append({
-                    "role": "user",
-                    "content": f"**Concept Search:** {concept} (Strategy: Internal RAG Only)"
-                })
-
-                with st.spinner("Running Agentic System via RAG..."):
-                    try:
-                        result = execution_crew.kickoff(inputs={
-                            "concept": concept,
-                            "concept_input_main": concept
-                        })
-                        st.session_state.chat_history.append({
-                            "role": "assistant",
-                            "content": str(result)
-                        })
-                    except Exception as e:
-                        st.session_state.chat_history.append({
-                            "role": "assistant",
-                            "content": f"**Error:** Crew execution failed. Error message: `{e}`"
-                        })
-
-                st.rerun()
-
-        # Conversation display
-        st.subheader("Conversation")
-        chat_container = st.container(height=520, border=True)
-
-        for message in st.session_state.chat_history:
-            role = message.get("role", "assistant")
-            content = message.get("content", "")
-            with chat_container.chat_message(role):
-                st.markdown(content)
-
-        # Next step
-        if st.session_state.chat_history:
-            st.markdown("---")
-            if st.button("Start New Concept", on_click=reset_app_state_callback):
-                pass
-            st.info("Enter a new concept above and click 'Search Indexed Documents (RAG)'.")
+                st.session_state.last_index_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            st.success("Index ready.")
 
 
-# -----------------------
-# Run the app
-# -----------------------
-if __name__ == "__main__":
-    main_app()
+# Initialize chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "vs" not in st.session_state:
+    st.info("Build the index from the sidebar to start chatting.")
+    st.stop()
+
+st.caption(f"Index last built: {st.session_state.get('last_index_time', 'N/A')}")
+
+# Show chat history
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]):
+        st.markdown(m["content"])
+
+prompt = st.chat_input("Ask a concept question (e.g., 'What is LoRA fine-tuning?')")
+
+if prompt:
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # Retrieve
+    retriever = st.session_state.vs.as_retriever(search_kwargs={"k": 5})
+    retrieved = retriever.get_relevant_documents(prompt)
+
+    # Prepare context for LLM
+    context_blocks = []
+    for d in retrieved:
+        title = (d.metadata or {}).get("title", "Medium Article")
+        url = (d.metadata or {}).get("source", "")
+        context_blocks.append(f"[{title}]({url})\n\n{d.page_content}")
+
+    context = "\n\n---\n\n".join(context_blocks)
+
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, api_key=api_key)
+
+    system = (
+        "You are a helpful teacher. Answer using ONLY the provided context.\n"
+        "Explain the concept clearly, then provide a short 'Sources' section.\n"
+        "If the context is insufficient, say so and ask for a narrower query.\n"
+    )
+
+    full_prompt = f"{system}\n\nCONTEXT:\n{context}\n\nQUESTION:\n{prompt}\n"
+
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            answer = llm.invoke(full_prompt).content
+
+        st.markdown(answer)
+
+        # Also print a clean, deduped list of sources (explicitly)
+        sources = format_sources(retrieved)
+        if sources:
+            st.markdown("\n\n### Sources (Medium)\n")
+            for s in sources:
+                line = f"- [{s['title']}]({s['url']})"
+                if s.get("published"):
+                    line += f" — {s['published']}"
+                st.markdown(line)
+
+    st.session_state.messages.append({"role": "assistant", "content": answer})
