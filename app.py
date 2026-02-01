@@ -14,6 +14,48 @@ Vector Store   : FAISS (In-Memory)
 Embeddings     : text-embedding-3-small
 LLM Model      : gpt-4o-mini
 ------------------------------------------------------------------------------------
+Description    :
+Description    :
+This application enables researchers and AI practitioners to upload or link 
+This application enables researchers and AI practitioners to upload or link
+multiple academic PDF papers and interact with them using an Agentic RAG (Retrieval 
+multiple academic PDF papers and interact with them using an Agentic RAG (Retrieval
+Augmented Generation) system. It builds an intelligent multi-agent pipeline where 
+Augmented Generation) system. It builds an intelligent multi-agent pipeline where
+one agent retrieves relevant information across all indexed PDFs, and another agent 
+one agent retrieves relevant information across all indexed PDFs, and another agent
+summarizes and explains the requested concept clearly.
+summarizes and explains the requested concept clearly.
+The Streamlit interface provides:
+Key Fixes (v1.0.1):
+  - API key management (OpenAI)
+  - Avoid ASCII codec crashes during PDF ingestion by normalizing/sanitizing extracted text
+  - PDF upload and indexing (up to 5 documents)
+  - Ensure stdout/stderr use UTF-8 (prevents unicode print/log crashes in some environments)
+  - Real-time RAG-based querying and concept explanation
+  - Fix clean_filename() bug (previously returned extension chars instead of the base name)
+  - Chat-style responses with citation-aware answers
+  - FAISS-based in-memory retrieval for fast search
+  - Multi-agent reasoning powered by CrewAI and LangChain
+------------------------------------------------------------------------------------
+Core Components:
+1. init_session_state()        : Initializes Streamlit session variables and caches.
+2. multi_rag_tool()            : Cross-document retrieval using FAISS Vector Store.
+3. clean_filename()            : Sanitizes filenames and prepares display titles.
+4. download_and_index_pdf()    : Downloads, splits, embeds, and indexes PDF documents.
+5. setup_llm_and_tools()       : Initializes OpenAI LLM and embedding models.
+6. reset_app_state_callback()  : Clears the conversation and resets concept input.
+7. main_app()                  : Defines the Streamlit UI flow and orchestrates agents.
+------------------------------------------------------------------------------------
+Usage Example:
+Run this app with Streamlit CLI:
+    $ streamlit run app.py
+------------------------------------------------------------------------------------
+Dependencies:See requirements.txt
+------------------------------------------------------------------------------------
+Future Enhancements:
+    - Add live search option
+====================================================================================
 Key Fixes (v1.0.2):
   1) PDF Unicode/ASCII crash fix:
      - Normalize & sanitize extracted PDF text (e.g., →) before chunking/embedding.
