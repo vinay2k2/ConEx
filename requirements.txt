@@ -1,8 +1,14 @@
 streamlit
 crewai
+langchain
 langchain-openai
 langchain-community
 faiss-cpu
 pypdf
 requests
 openai
+feedparser
+newspaper3k
+python-dotenv
+
+
